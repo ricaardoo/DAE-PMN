@@ -1,5 +1,7 @@
-import { useState } from "react";
-import { BODEGAS_INIT, STOCK_INIT, TRANSFERENCIAS_INIT } from "./data/mockData";
+import { useState, useMemo } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
+import { db } from "./data/db";
+import { BODEGAS_INIT } from "./data/mockData";
 import { now, nextId } from "./utils/helpers";
 import { Modal } from "./components/Common";
 import Landing from "./components/Landing";
@@ -11,22 +13,39 @@ import NuevaSolicitud from "./components/NuevaSolicitud";
 export default function App() {
   const [usuario, setUsuario] = useState(null);
   const [pantalla, setPantalla] = useState("dashboard");
-  const [transferencias, setTransferencias] = useState(TRANSFERENCIAS_INIT);
-  const [stock, setStock] = useState(STOCK_INIT);
   const [modalNueva, setModalNueva] = useState(false);
   const [detalleId, setDetalleId] = useState(null);
-  const detalleT = transferencias.find(t => t.id === detalleId);
-  const [log, setLog] = useState([
-    { ts: "06/05/2026 17:10", msg: "ST-2026-001 cerrado exitosamente. Bodega Norte +40 uds. SKU-4421." }
-  ]);
 
-  const addLog = (msg) => setLog(prev => [{ ts: now(), msg }, ...prev.slice(0, 19)]);
+  const transferencias = useLiveQuery(() => db.transferencias.toArray());
+  const stockList = useLiveQuery(() => db.stock.toArray());
+  const log = useLiveQuery(() => db.logs.orderBy("id").reverse().limit(20).toArray());
+
+  const stock = useMemo(() => {
+    if (!stockList) return {};
+    const s = {};
+    stockList.forEach((item) => {
+      if (!s[item.bodegaId]) s[item.bodegaId] = {};
+      s[item.bodegaId][item.sku] = {
+        disp: item.disp,
+        comp: item.comp,
+        recl: item.recl,
+        min: item.min,
+      };
+    });
+    return s;
+  }, [stockList]);
+
+  const detalleT = useMemo(() => {
+    if (!transferencias || !detalleId) return null;
+    return transferencias.find((t) => t.id === detalleId) || null;
+  }, [transferencias, detalleId]);
 
   // ─── LÓGICA DE ACCIONES ──────────────────────────────────────────────────
-  const handleCrearTransferencia = (data) => {
+  const handleCrearTransferencia = async (data) => {
     const id = nextId(transferencias);
     const nueva = {
-      id, ...data,
+      id,
+      ...data,
       solicitante: usuario.nombre,
       estado: data.requiereAprobacion ? "SOLICITADO" : "PREPARANDO",
       fechaCreacion: now(),
@@ -34,70 +53,87 @@ export default function App() {
       cantidadDespacho: data.cantidad,
     };
 
-    setTransferencias(prev => [...prev, nueva]);
+    await db.transaction("rw", db.transferencias, db.stock, db.logs, async () => {
+      await db.transferencias.add(nueva);
 
-    // Comprometer stock en origen
-    setStock(prev => {
-      const s = JSON.parse(JSON.stringify(prev));
-      s[data.origen][data.sku].disp -= data.cantidad;
-      s[data.origen][data.sku].comp += data.cantidad;
-      return s;
+      // Comprometer stock en origen
+      const currentStock = await db.stock.get([data.origen, data.sku]);
+      if (currentStock) {
+        await db.stock.put({
+          ...currentStock,
+          disp: currentStock.disp - data.cantidad,
+          comp: currentStock.comp + data.cantidad,
+        });
+      }
+
+      const logMsg = data.requiereAprobacion
+        ? `${id} creado (pendiente aprobación). ${data.cantidad} uds. ${data.sku} comprometidas en ${BODEGAS_INIT.find((b) => b.id === data.origen)?.nombre}.`
+        : `${id} creado. ${data.cantidad} uds. ${data.sku} comprometidas en ${BODEGAS_INIT.find((b) => b.id === data.origen)?.nombre}.`;
+      await db.logs.add({ ts: now(), msg: logMsg });
     });
-
-    if (data.requiereAprobacion) {
-      addLog(`${id} creado (pendiente aprobación). ${data.cantidad} uds. ${data.sku} comprometidas en ${BODEGAS_INIT.find(b=>b.id===data.origen)?.nombre}.`);
-    } else {
-      addLog(`${id} creado. ${data.cantidad} uds. ${data.sku} comprometidas en ${BODEGAS_INIT.find(b=>b.id===data.origen)?.nombre}.`);
-    }
   };
 
-  const handleAccion = (accion, params) => {
+  const handleAccion = async (accion, params) => {
     const t = detalleT;
+    if (!t) return;
     const ts = now();
 
-    setTransferencias(prev => prev.map(tr => {
-      if (tr.id !== t.id) return tr;
-      let next = { ...tr };
+    await db.transaction("rw", db.transferencias, db.stock, db.logs, async () => {
+      let next = { ...t };
+      let logMsg = "";
 
       if (accion === "APROBAR") {
         next.estado = "PREPARANDO";
         next.fechaPreparando = ts;
-        addLog(`${tr.id}: Solicitud aprobada por supervisor.`);
+        logMsg = `${t.id}: Solicitud aprobada por supervisor.`;
       }
 
       if (accion === "CONFIRMAR_PICKING") {
         const cp = params.cantPicking;
-        if (cp === tr.cantidad) {
+        if (cp === t.cantidad) {
           next.estado = "PREPARADO";
           next.fechaPreparado = ts;
           next.cantidadDespacho = cp;
-          addLog(`${tr.id}: Picking conforme. ${cp} uds. confirmadas.`);
-        } else if (cp < tr.cantidad && cp > 0) {
+          logMsg = `${t.id}: Picking conforme. ${cp} uds. confirmadas.`;
+        } else if (cp < t.cantidad && cp > 0) {
           next.estado = "DISCREPANCIA_PICKING";
           next.fechaDiscrepancia = ts;
           next.cantidadPicking = cp;
-          addLog(`${tr.id}: Discrepancia picking. Físico: ${cp}, Solicitado: ${tr.cantidad}.`);
+          logMsg = `${t.id}: Discrepancia picking. Físico: ${cp}, Solicitado: ${t.cantidad}.`;
         } else {
           next.estado = "ANULADO";
           next.fechaAnulado = ts;
-          addLog(`${tr.id}: Anulado. Picking sin stock físico.`);
+          
+          // devolver stock comprometido
+          const currentStock = await db.stock.get([t.origen, t.sku]);
+          if (currentStock) {
+            const compToFree = Math.min(currentStock.comp, t.cantidad);
+            await db.stock.put({
+              ...currentStock,
+              comp: currentStock.comp - compToFree,
+              disp: currentStock.disp + compToFree,
+            });
+          }
+          logMsg = `${t.id}: Anulado. Picking sin stock físico.`;
         }
       }
 
       if (accion === "ACEPTAR_PARCIAL") {
         // liberar la diferencia de stock comprometido
-        setStock(prev2 => {
-          const s = JSON.parse(JSON.stringify(prev2));
-          const diff = tr.cantidad - tr.cantidadPicking;
-          s[tr.origen][tr.sku].comp -= diff;
-          s[tr.origen][tr.sku].disp += diff;
-          return s;
-        });
+        const diff = t.cantidad - t.cantidadPicking;
+        const currentStock = await db.stock.get([t.origen, t.sku]);
+        if (currentStock) {
+          await db.stock.put({
+            ...currentStock,
+            comp: currentStock.comp - diff,
+            disp: currentStock.disp + diff,
+          });
+        }
         next.estado = "PREPARADO";
         next.fechaPreparado = ts;
-        next.cantidadDespacho = tr.cantidadPicking;
-        next.cantidad = tr.cantidadPicking;
-        addLog(`${tr.id}: Transferencia parcial aceptada. Ajustado a ${tr.cantidadPicking} uds.`);
+        next.cantidadDespacho = t.cantidadPicking;
+        next.cantidad = t.cantidadPicking;
+        logMsg = `${t.id}: Transferencia parcial aceptada. Ajustado a ${t.cantidadPicking} uds.`;
       }
 
       if (accion === "FIRMAR_CUSTODIA") {
@@ -105,84 +141,108 @@ export default function App() {
         next.fechaTransito = ts;
         next.operador = params.operador;
         // comp → trans (en stock lo marcamos visualmente liberando comp)
-        setStock(prev2 => {
-          const s = JSON.parse(JSON.stringify(prev2));
-          s[tr.origen][tr.sku].comp -= next.cantidadDespacho;
-          return s;
-        });
-        addLog(`${tr.id}: En tránsito. Operador: ${params.operador}. Despacho: ${next.cantidadDespacho} uds.`);
+        const currentStock = await db.stock.get([t.origen, t.sku]);
+        if (currentStock) {
+          await db.stock.put({
+            ...currentStock,
+            comp: currentStock.comp - next.cantidadDespacho,
+          });
+        }
+        logMsg = `${t.id}: En tránsito. Operador: ${params.operador}. Despacho: ${next.cantidadDespacho} uds.`;
       }
 
       if (accion === "CONFIRMAR_RECEPCION") {
         const danadas = params.cantDanada;
-        const conformes = (next.cantidadDespacho ?? tr.cantidad) - danadas;
+        const conformes = (next.cantidadDespacho ?? t.cantidad) - danadas;
         if (danadas === 0) {
           // Cierre normal
           next.estado = "CERRADO";
           next.fechaCierre = ts;
-          setStock(prev2 => {
-            const s = JSON.parse(JSON.stringify(prev2));
-            s[tr.origen][tr.sku].disp -= (next.cantidadDespacho ?? tr.cantidad);
-            // En origen ya se descontó al comprometer, aquí solo ajustamos destino
-            s[tr.destino][tr.sku].disp += (next.cantidadDespacho ?? tr.cantidad);
-            return s;
-          });
-          addLog(`${tr.id}: Cerrado. ${next.cantidadDespacho ?? tr.cantidad} uds. recibidas en ${BODEGAS_INIT.find(b=>b.id===tr.destino)?.nombre}.`);
+          
+          // Sumar al destino (se corrige el bug de la doble deducción en origen)
+          const destStock = await db.stock.get([t.destino, t.sku]);
+          if (destStock) {
+            await db.stock.put({
+              ...destStock,
+              disp: destStock.disp + (next.cantidadDespacho ?? t.cantidad),
+            });
+          }
+          logMsg = `${t.id}: Cerrado. ${next.cantidadDespacho ?? t.cantidad} uds. recibidas en ${BODEGAS_INIT.find((b) => b.id === t.destino)?.nombre}.`;
         } else {
           // Con daño
           next.estado = "PENDIENTE_RECLAMO";
           next.fechaRecepcionParcial = ts;
           next.cantidadDanada = danadas;
           next.cantidadConforme = conformes;
-          setStock(prev2 => {
-            const s = JSON.parse(JSON.stringify(prev2));
-            s[tr.destino][tr.sku].disp += conformes;
-            s[tr.destino][tr.sku].recl += danadas;
-            return s;
-          });
-          addLog(`${tr.id}: Recepción con daño. ${conformes} conformes, ${danadas} en RECLAMO.`);
+          
+          const destStock = await db.stock.get([t.destino, t.sku]);
+          if (destStock) {
+            await db.stock.put({
+              ...destStock,
+              disp: destStock.disp + conformes,
+              recl: destStock.recl + danadas,
+            });
+          }
+          logMsg = `${t.id}: Recepción con daño. ${conformes} conformes, ${danadas} en RECLAMO.`;
         }
       }
 
       if (accion === "RESOLVER_RECLAMO") {
         next.estado = "CERRADO_CON_INCIDENCIA";
         next.fechaCierre = ts;
-        if (params.decision === "REPONER") {
-          setStock(prev2 => {
-            const s = JSON.parse(JSON.stringify(prev2));
-            s[tr.destino][tr.sku].disp += tr.cantidadDanada;
-            s[tr.destino][tr.sku].recl -= tr.cantidadDanada;
-            return s;
-          });
-          addLog(`${tr.id}: Reclamo resuelto. ${tr.cantidadDanada} uds. repuestas.`);
-        } else {
-          setStock(prev2 => {
-            const s = JSON.parse(JSON.stringify(prev2));
-            s[tr.destino][tr.sku].recl -= tr.cantidadDanada;
-            return s;
-          });
-          addLog(`${tr.id}: Reclamo resuelto. ${tr.cantidadDanada} uds. dadas de baja.`);
+        
+        const destStock = await db.stock.get([t.destino, t.sku]);
+        if (destStock) {
+          if (params.decision === "REPONER") {
+            await db.stock.put({
+              ...destStock,
+              disp: destStock.disp + t.cantidadDanada,
+              recl: destStock.recl - t.cantidadDanada,
+            });
+            logMsg = `${t.id}: Reclamo resuelto. ${t.cantidadDanada} uds. repuestas.`;
+          } else {
+            await db.stock.put({
+              ...destStock,
+              recl: destStock.recl - t.cantidadDanada,
+            });
+            logMsg = `${t.id}: Reclamo resuelto. ${t.cantidadDanada} uds. dadas de baja.`;
+          }
         }
       }
 
       if (accion === "ANULADO") {
         next.estado = "ANULADO";
         next.fechaAnulado = ts;
+        
         // devolver stock comprometido
-        setStock(prev2 => {
-          const s = JSON.parse(JSON.stringify(prev2));
-          const comp = s[tr.origen][tr.sku].comp;
-          const cant = next.cantidadDespacho ?? tr.cantidad;
-          s[tr.origen][tr.sku].comp -= Math.min(comp, cant);
-          s[tr.origen][tr.sku].disp += Math.min(comp, cant);
-          return s;
-        });
-        addLog(`${tr.id}: ANULADO. Stock devuelto a disponible.`);
+        const currentStock = await db.stock.get([t.origen, t.sku]);
+        if (currentStock) {
+          const cant = next.cantidadDespacho ?? t.cantidad;
+          const compToFree = Math.min(currentStock.comp, cant);
+          await db.stock.put({
+            ...currentStock,
+            comp: currentStock.comp - compToFree,
+            disp: currentStock.disp + compToFree,
+          });
+        }
+        logMsg = `${t.id}: ANULADO. Stock devuelto a disponible.`;
       }
 
-      return next;
-    }));
+      await db.transferencias.put(next);
+      if (logMsg) {
+        await db.logs.add({ ts: now(), msg: logMsg });
+      }
+    });
   };
+
+  // Mostrar indicador de carga si la BD no ha cargado los datos iniciales
+  if (!transferencias || !stockList || !log) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#0a0e1a", color: "#e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Outfit', sans-serif" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.5, color: "#6366f1" }}>INICIALIZANDO BASE DE DATOS...</div>
+      </div>
+    );
+  }
 
   // ─── LOGIN ───────────────────────────────────────────────────────────────
   if (!usuario) {
