@@ -16,10 +16,12 @@ export default function App() {
   const [modalNueva, setModalNueva] = useState(false);
   const [detalleId, setDetalleId] = useState(null);
 
+  // Consultas reactivas en tiempo real a IndexedDB (Dexie)
   const transferencias = useLiveQuery(() => db.transferencias.toArray());
   const stockList = useLiveQuery(() => db.stock.toArray());
   const log = useLiveQuery(() => db.logs.orderBy("id").reverse().limit(20).toArray());
 
+  // Mapeo optimizado de existencias por Bodega y SKU
   const stock = useMemo(() => {
     if (!stockList) return {};
     const s = {};
@@ -35,12 +37,14 @@ export default function App() {
     return s;
   }, [stockList]);
 
+  // Captura de la transferencia seleccionada para despliegue de detalles
   const detalleT = useMemo(() => {
     if (!transferencias || !detalleId) return null;
     return transferencias.find((t) => t.id === detalleId) || null;
   }, [transferencias, detalleId]);
 
   // ─── LÓGICA DE ACCIONES ──────────────────────────────────────────────────
+  
   const handleCrearTransferencia = async (data) => {
     const id = nextId(transferencias);
     const nueva = {
@@ -159,7 +163,7 @@ export default function App() {
           next.estado = "CERRADO";
           next.fechaCierre = ts;
           
-          // Sumar al destino (se corrige el bug de la doble deducción en origen)
+          // Sumar al destino 
           const destStock = await db.stock.get([t.destino, t.sku]);
           if (destStock) {
             await db.stock.put({
@@ -235,7 +239,7 @@ export default function App() {
     });
   };
 
-  // Mostrar indicador de carga si la BD no ha cargado los datos iniciales
+  // Mostrar indicador de carga si la BD no ha poblado los almacenes iniciales
   if (!transferencias || !stockList || !log) {
     return (
       <div style={{ minHeight: "100vh", background: "#0a0e1a", color: "#e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Outfit', sans-serif" }}>
@@ -244,12 +248,12 @@ export default function App() {
     );
   }
 
-  // ─── LOGIN ───────────────────────────────────────────────────────────────
+  // ─── LOGIN / SELECCIÓN DE PERFIL SIMULADO ──────────────────────────────────
   if (!usuario) {
     return <Landing setUsuario={setUsuario} />;
   }
 
-  // ─── APP PRINCIPAL ───────────────────────────────────────────────────────
+  // ─── APP PRINCIPAL CONTROLADA POR ROLES ────────────────────────────────────
   const navItems = [
     { id: "dashboard", label: "Dashboard" },
     { id: "inventario", label: "Inventario" },
@@ -260,7 +264,7 @@ export default function App() {
     <div style={{ minHeight: "100vh", background: "#0a0e1a", color: "#e2e8f0", fontFamily: "'DM Mono', monospace" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;700&family=Outfit:wght@400;500;600;700;800&display=swap'); * { box-sizing: border-box; }`}</style>
 
-      {/* Navbar */}
+      {/* Navbar con Identificación de Sesión de Usuario Activo */}
       <div style={{ background: "#111827", borderBottom: "1px solid #1f2937", padding: "0 24px", display: "flex", alignItems: "center", gap: 24, height: 52 }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: "#6366f1", fontFamily: "'Outfit', sans-serif", whiteSpace: "nowrap" }}>ControlBod.</div>
         {navItems.map(n => (
@@ -273,19 +277,21 @@ export default function App() {
             {n.label}
           </button>
         ))}
+        
+        {/* Badge Informativo del Perfil Activo (Requisito de Autenticidad) */}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 11, color: "#e2e8f0", fontWeight: 700 }}>{usuario.nombre}</div>
-            <div style={{ fontSize: 10, color: "#6b7280" }}>{usuario.rolLabel}</div>
+            <div style={{ fontSize: 10, color: "#6366f1", fontWeight: 600 }}>{usuario.rolLabel}</div>
           </div>
-          <button onClick={() => setUsuario(null)} style={{
+          <button onClick={() => { setUsuario(null); setPantalla("dashboard"); }} style={{
             background: "#1f2937", border: "1px solid #374151", color: "#9ca3af",
             borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Mono', monospace"
           }}>Salir</button>
         </div>
       </div>
 
-      {/* Contenido */}
+      {/* Contenido Modularizado */}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 20px" }}>
         <div style={{ marginBottom: 20 }}>
           <div style={{ fontSize: 20, fontWeight: 800, color: "#e2e8f0", fontFamily: "'Outfit', sans-serif" }}>
@@ -326,7 +332,7 @@ export default function App() {
         )}
       </div>
 
-      {/* Modal Nueva Solicitud */}
+      {/* Modal Nueva Solicitud (Sujeto a validación interna por props) */}
       {modalNueva && (
         <NuevaSolicitud
           onClose={() => setModalNueva(false)}
@@ -337,7 +343,7 @@ export default function App() {
         />
       )}
 
-      {/* Modal Detalle */}
+      {/* Modal Detalle Operacional (Seguridad de transiciones por rol) */}
       {detalleT && (
         <Modal title={`DETALLE — ${detalleT.id}`} onClose={() => setDetalleId(null)}>
           <DetalleTransferencia
