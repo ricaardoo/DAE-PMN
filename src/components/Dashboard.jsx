@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { CATALOGOS, BODEGAS_INIT } from "../data/mockData";
+import { CATALOGOS } from "../data/mockData";
 import { Btn, Badge } from "./Common";
 
 export default function Dashboard({ transferencias, stock, bodegas, onNueva, onVerDetalle, usuario }) {

@@ -15,6 +15,12 @@ export default function App() {
   const [pantalla, setPantalla] = useState("dashboard");
   const [modalNueva, setModalNueva] = useState(false);
   const [detalleId, setDetalleId] = useState(null);
+  const [dbError, setDbError] = useState(null);
+
+  const mostrarError = (msg) => {
+    setDbError(msg);
+    setTimeout(() => setDbError(null), 5000);
+  };
 
   // Consultas reactivas en tiempo real a IndexedDB (Dexie)
   const transferencias = useLiveQuery(() => db.transferencias.toArray());
@@ -57,24 +63,29 @@ export default function App() {
       cantidadDespacho: data.cantidad,
     };
 
-    await db.transaction("rw", db.transferencias, db.stock, db.logs, async () => {
-      await db.transferencias.add(nueva);
+    try {
+      await db.transaction("rw", db.transferencias, db.stock, db.logs, async () => {
+        await db.transferencias.add(nueva);
 
-      // Comprometer stock en origen
-      const currentStock = await db.stock.get([data.origen, data.sku]);
-      if (currentStock) {
-        await db.stock.put({
-          ...currentStock,
-          disp: currentStock.disp - data.cantidad,
-          comp: currentStock.comp + data.cantidad,
-        });
-      }
+        // Comprometer stock en origen
+        const currentStock = await db.stock.get([data.origen, data.sku]);
+        if (currentStock) {
+          await db.stock.put({
+            ...currentStock,
+            disp: currentStock.disp - data.cantidad,
+            comp: currentStock.comp + data.cantidad,
+          });
+        }
 
-      const logMsg = data.requiereAprobacion
-        ? `${id} creado (pendiente aprobación). ${data.cantidad} uds. ${data.sku} comprometidas en ${BODEGAS_INIT.find((b) => b.id === data.origen)?.nombre}.`
-        : `${id} creado. ${data.cantidad} uds. ${data.sku} comprometidas en ${BODEGAS_INIT.find((b) => b.id === data.origen)?.nombre}.`;
-      await db.logs.add({ ts: now(), msg: logMsg });
-    });
+        const logMsg = data.requiereAprobacion
+          ? `${id} creado (pendiente aprobación). ${data.cantidad} uds. ${data.sku} comprometidas en ${BODEGAS_INIT.find((b) => b.id === data.origen)?.nombre}.`
+          : `${id} creado. ${data.cantidad} uds. ${data.sku} comprometidas en ${BODEGAS_INIT.find((b) => b.id === data.origen)?.nombre}.`;
+        await db.logs.add({ ts: now(), msg: logMsg });
+      });
+    } catch (e) {
+      console.error("[DB] Error al crear transferencia:", e);
+      mostrarError(`Error al crear la solicitud: ${e?.message || "fallo de base de datos"}`);
+    }
   };
 
   const handleAccion = async (accion, params) => {
@@ -82,6 +93,7 @@ export default function App() {
     if (!t) return;
     const ts = now();
 
+    try {
     await db.transaction("rw", db.transferencias, db.stock, db.logs, async () => {
       let next = { ...t };
       let logMsg = "";
@@ -237,6 +249,10 @@ export default function App() {
         await db.logs.add({ ts: now(), msg: logMsg });
       }
     });
+    } catch (e) {
+      console.error("[DB] Error al ejecutar acción:", e);
+      mostrarError(`Error al ejecutar "${accion}": ${e?.message || "fallo de base de datos"}`);
+    }
   };
 
   // Mostrar indicador de carga si la BD no ha poblado los almacenes iniciales
@@ -355,6 +371,26 @@ export default function App() {
             usuario={usuario}
           />
         </Modal>
+      )}
+      {/* Toast flotante de error de base de datos */}
+      {dbError && (
+        <div style={{
+          position: "fixed", bottom: 24, right: 24, zIndex: 9999,
+          background: "#1a0a0a", border: "1px solid #ef444466",
+          borderLeft: "4px solid #ef4444",
+          borderRadius: 10, padding: "14px 18px",
+          maxWidth: 380, boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+          fontFamily: "'DM Mono', monospace", animation: "slideInToast 0.25s ease"
+        }}>
+          <style>{`@keyframes slideInToast { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#ef4444", letterSpacing: 1, marginBottom: 4 }}>⚠ ERROR DE BASE DE DATOS</div>
+              <div style={{ fontSize: 12, color: "#fca5a5", lineHeight: 1.5 }}>{dbError}</div>
+            </div>
+            <button onClick={() => setDbError(null)} style={{ background: "none", border: "none", color: "#6b7280", fontSize: 16, cursor: "pointer", flexShrink: 0, lineHeight: 1 }}>✕</button>
+          </div>
+        </div>
       )}
     </div>
   );
