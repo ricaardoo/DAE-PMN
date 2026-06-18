@@ -47,7 +47,7 @@ export default function DetalleTransferencia({ t, onAccion, usuario }) {
         {[
           ["Cantidad Solicitada", `${t.cantidad} uds.`],
           ["Cantidad Despacho", `${despachadoReal} uds.`],
-          ["Origen", BODEGAS_INIT.find(b => b.id === t.origen)?.nombre || t.origen],
+          ["Origen", t.origen === "COMPRA_EXTERNA" ? "🛒 Compra Externa (Proveedor)" : (BODEGAS_INIT.find(b => b.id === t.origen)?.nombre || t.origen)],
           ["Destino", BODEGAS_INIT.find(b => b.id === t.destino)?.nombre || t.destino],
           ["Solicitante", t.solicitante],
           ["Operador Logístico", t.operador || "—"],
@@ -86,7 +86,7 @@ export default function DetalleTransferencia({ t, onAccion, usuario }) {
         <div style={{ fontSize: 10, color: "#6366f1", fontWeight: 700, textTransform: "uppercase", marginBottom: 12, letterSpacing: 0.5 }}>Operaciones de Flujo de Negocio</div>
 
         {/* FASE: SOLICITADO */}
-        {t.estado === "SOLICITADO" && usuario.rol === "SUPERVISOR" && (
+        {t.estado === "SOLICITADO" && usuario.rol === "SUPERVISOR" && usuario.bodega === t.destino && (
           <div>
             <Alert type="warn">Esta solicitud requiere revisión por volumen/monto (${(t.valor || 0).toLocaleString("es-CL")}). Autorice o invalide la operación.</Alert>
             <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
@@ -95,12 +95,12 @@ export default function DetalleTransferencia({ t, onAccion, usuario }) {
             </div>
           </div>
         )}
-        {t.estado === "SOLICITADO" && usuario.rol !== "SUPERVISOR" && (
-          <Alert type="info">Flujo Retenido: Esperando firma de aprobación por la Jefatura de Logística (Supervisor).</Alert>
+        {t.estado === "SOLICITADO" && !(usuario.rol === "SUPERVISOR" && usuario.bodega === t.destino) && (
+          <Alert type="info">Flujo Retenido: Esperando firma de aprobación por el Supervisor de la Bodega Destino ({BODEGAS_INIT.find(b => b.id === t.destino)?.nombre}).</Alert>
         )}
 
         {/* FASE: PREPARANDO */}
-        {t.estado === "PREPARANDO" && usuario.rol === "ENCARGADO_ORIGEN" && (
+        {t.estado === "PREPARANDO" && usuario.rol === "GESTOR" && usuario.bodega === t.origen && (
           <div>
             <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 8 }}>Efectúe el conteo en las estanterías de origen e ingrese el stock físico real:</div>
             <Input label="Unidades Físicamente Encontradas" type="number" value={cantPicking} onChange={setCantPicking} placeholder={`Esperadas en estantería: ${t.cantidad}`} />
@@ -112,7 +112,7 @@ export default function DetalleTransferencia({ t, onAccion, usuario }) {
         )}
 
         {/* FASE: DISCREPANCIA_PICKING */}
-        {t.estado === "DISCREPANCIA_PICKING" && usuario.rol === "SOLICITANTE" && (
+        {t.estado === "DISCREPANCIA_PICKING" && usuario.rol === "GESTOR" && usuario.bodega === t.destino && (
           <div>
             <Alert type="warn">Alerta de Quiebre Parcial: El encargado físico solo encontró {t.cantidadPicking} unidades de las {t.cantidad} solicitadas originalmente. ¿Acepta la modificación?</Alert>
             <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
@@ -123,18 +123,18 @@ export default function DetalleTransferencia({ t, onAccion, usuario }) {
         )}
 
         {/* FASE: PREPARADO */}
-        {t.estado === "PREPARADO" && usuario.rol === "OPERADOR" && (
+        {t.estado === "PREPARADO" && usuario.rol === "GESTOR" && usuario.bodega === t.origen && (
           <div>
-            <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 8 }}>Traspaso de Responsabilidad Civil: Ingrese los datos de la patente o chofer para iniciar el tránsito:</div>
-            <Input label="Identificación del Operador / Patente de Transporte" value={operador} onChange={setOperador} placeholder="Ej: Juan Reyes - Patente AB-CD-12" />
+            <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 8 }}>Despachar transferencia: Ingrese el nombre del transportista y patente:</div>
+            <Input label="Identificación del Operador / Patente" value={operador} onChange={setOperador} placeholder="Ej: Juan Reyes - Patente AB-CD-12" />
             <div style={{ display: "flex", marginTop: 12, justifyContent: "flex-end" }}>
-              <Btn variant="primary" onClick={() => onAccion("FIRMAR_CUSTODIA", { operador })} disabled={!operador.trim()}>Firmar Custodia Logística</Btn>
+              <Btn variant="primary" onClick={() => onAccion("FIRMAR_CUSTODIA", { operador })} disabled={!operador.trim()}>Despachar y Enviar</Btn>
             </div>
           </div>
         )}
 
         {/* FASE: EN_TRANSITO */}
-        {t.estado === "EN_TRANSITO" && usuario.rol === "ENCARGADO_DESTINO" && (
+        {t.estado === "EN_TRANSITO" && usuario.rol === "GESTOR" && usuario.bodega === t.destino && (
           <div>
             <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 8 }}>Efectúe la inspección visual de recepción. Declare mermas o unidades destruidas si existiesen:</div>
             <Input label="Unidades Dañadas / Mermas Detectadas" type="number" value={cantDanada} onChange={setCantDanada} placeholder="0 (Conforme)" />
@@ -145,7 +145,7 @@ export default function DetalleTransferencia({ t, onAccion, usuario }) {
         )}
 
         {/* FASE: PENDIENTE_RECLAMO */}
-        {t.estado === "PENDIENTE_RECLAMO" && usuario.rol === "SUPERVISOR" && (
+        {t.estado === "PENDIENTE_RECLAMO" && usuario.rol === "SUPERVISOR" && usuario.bodega === t.destino && (
           <div>
             <Alert type="error">Auditoría de Daños Obligatoria: Llegaron {t.cantidadDanada} unidades rotas a destino. Evalúe el seguro y defina la resolución:</Alert>
             <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
@@ -156,13 +156,14 @@ export default function DetalleTransferencia({ t, onAccion, usuario }) {
         )}
 
         {/* Bloque Informativo de Espera Genérico */}
-        {["PREPARANDO", "DISCREPANCIA_PICKING", "PREPARADO", "EN_TRANSITO"].includes(t.estado) && 
-         !((t.estado === "PREPARANDO" && usuario.rol === "ENCARGADO_ORIGEN") || 
-           (t.estado === "DISCREPANCIA_PICKING" && usuario.rol === "SOLICITANTE") || 
-           (t.estado === "PREPARADO" && usuario.rol === "OPERADOR") || 
-           (t.estado === "EN_TRANSITO" && usuario.rol === "ENCARGADO_DESTINO")) && (
+        {["PREPARANDO", "DISCREPANCIA_PICKING", "PREPARADO", "EN_TRANSITO", "PENDIENTE_RECLAMO"].includes(t.estado) && 
+         !((t.estado === "PREPARANDO" && usuario.rol === "GESTOR" && usuario.bodega === t.origen) || 
+           (t.estado === "DISCREPANCIA_PICKING" && usuario.rol === "GESTOR" && usuario.bodega === t.destino) || 
+           (t.estado === "PREPARADO" && usuario.rol === "GESTOR" && usuario.bodega === t.origen) || 
+           (t.estado === "EN_TRANSITO" && usuario.rol === "GESTOR" && usuario.bodega === t.destino) ||
+           (t.estado === "PENDIENTE_RECLAMO" && usuario.rol === "SUPERVISOR" && usuario.bodega === t.destino)) && (
           <div style={{ fontSize: 11, color: "#6b7280", fontStyle: "italic" }}>
-            Fase Pendiente: Esperando que el usuario con atribuciones de "{t.estado === "PREPARANDO" ? "Encargado de Origen" : t.estado === "DISCREPANCIA_PICKING" ? "Solicitante" : t.estado === "PREPARADO" ? "Operador" : "Encargado de Destino"}" ejecute su transacción.
+            Fase Pendiente: Esperando que el {["PREPARANDO", "PREPARADO"].includes(t.estado) ? "Gestor de Almacén Origen" : ["DISCREPANCIA_PICKING", "EN_TRANSITO"].includes(t.estado) ? "Gestor de Almacén Destino" : "Supervisor de Almacén Destino"} ({BODEGAS_INIT.find(b => b.id === (["PREPARANDO", "PREPARADO"].includes(t.estado) ? t.origen : t.destino))?.nombre || "Proveedor Externo"}) ejecute su transacción.
           </div>
         )}
 

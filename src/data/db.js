@@ -9,6 +9,13 @@ db.version(1).stores({
   logs: "++id, ts",
 });
 
+db.version(2).stores({
+  transferencias: "id, sku, origen, destino, estado, fechaCreacion",
+  stock: "[bodegaId+sku], bodegaId, sku",
+  logs: "++id, ts",
+  alertas: "++id, sku, bodegaId, estado, ts",
+});
+
 db.on("populate", () => {
   const stockPromises = [];
   Object.entries(STOCK_INIT).forEach(([bodegaId, skus]) => {

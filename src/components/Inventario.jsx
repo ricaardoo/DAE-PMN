@@ -1,329 +1,107 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { CATALOGOS } from "../data/mockData";
-import { ProgressBar, DonutChart } from "./Common";
+import { db } from "../data/db";
+import { Btn } from "./Common";
 
-export default function Inventario({ stock, bodegas }) {
-  const [bodSel, setBodSel] = useState(bodegas[0].id);
+export default function Inventario({ stock, bodegas, usuario }) {
+  const [bodSel, setBodSel] = useState(() => (usuario?.rol !== "ADMIN" && usuario?.bodega) ? usuario.bodega : bodegas[0].id);
   const s = stock[bodSel] || {};
   const bod = bodegas.find(b => b.id === bodSel);
 
-  // Resumen general de la bodega
-  const resumen = useMemo(() => {
-    const entries = Object.entries(s);
-    const totalDisp = entries.reduce((sum, [, st]) => sum + st.disp, 0);
-    const totalComp = entries.reduce((sum, [, st]) => sum + st.comp, 0);
-    const totalRecl = entries.reduce((sum, [, st]) => sum + st.recl, 0);
-    const totalMin = entries.reduce((sum, [, st]) => sum + st.min, 0);
-    const alertas = entries.filter(([, st]) => st.disp < st.min).length;
-    const total = totalDisp + totalComp + totalRecl;
-    return { totalDisp, totalComp, totalRecl, totalMin, alertas, total, items: entries.length };
-  }, [s]);
+  const handleAvisarGestor = async (sku, skuNombre, disp, min) => {
+    try {
+      const existente = await db.alertas
+        .where("bodegaId").equals(bodSel)
+        .and(x => x.sku === sku)
+        .first();
 
-  // Valor total del inventario
-  const valorTotal = useMemo(() => {
-    return Object.entries(s).reduce((sum, [sku, st]) => {
-      const prod = CATALOGOS.find(c => c.sku === sku);
-      return sum + (st.disp + st.comp) * (prod?.precio || 0);
-    }, 0);
-  }, [s]);
+      if (existente) {
+        alert("Ya existe una alerta de reposición activa para este producto en esta bodega.");
+        return;
+      }
+
+      await db.alertas.add({
+        bodegaId: bodSel,
+        sku,
+        skuNombre,
+        cantActual: disp,
+        cantMin: min,
+        fecha: new Date().toISOString()
+      });
+      alert(`✓ Alerta enviada con éxito al Gestor de la bodega ${bod?.nombre}.`);
+    } catch (e) {
+      console.error("Error al crear alerta:", e);
+      alert("Ocurrió un error al enviar la alerta.");
+    }
+  };
+
+  const esSupervisor = usuario?.rol === "SUPERVISOR";
 
   return (
-    <div style={{ fontFamily: "var(--font-sans)" }}>
-      {/* ═══ SELECTOR DE BODEGA ═══ */}
-      <div style={{
-        display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap"
-      }}>
-        {bodegas.map(b => {
-          const isActive = bodSel === b.id;
-          const bodegaStock = stock[b.id] || {};
-          const alertCount = Object.values(bodegaStock).filter(st => st.disp < st.min).length;
-
-          return (
+    <div>
+      {/* Selector de Bodega visible solo para Administrador */}
+      {usuario?.rol === "ADMIN" && (
+        <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+          {bodegas.map(b => (
             <button key={b.id} onClick={() => setBodSel(b.id)} style={{
-              padding: "12px 20px", borderRadius: "var(--radius-md)",
-              fontSize: 13, fontWeight: 600, cursor: "pointer",
-              transition: "all var(--transition-fast)",
-              fontFamily: "var(--font-sans)", border: "none",
-              background: isActive ? `linear-gradient(135deg, ${b.color}, ${b.color}cc)` : "var(--bg-tertiary)",
-              color: isActive ? "#fff" : "var(--text-secondary)",
-              boxShadow: isActive ? `0 4px 16px ${b.color}30` : "none",
-              position: "relative", display: "flex", alignItems: "center", gap: 10,
-              outline: isActive ? `2px solid ${b.color}40` : "1px solid var(--border-strong)",
-              outlineOffset: isActive ? 2 : 0
-            }}
-            onMouseEnter={e => {
-              if (!isActive) e.currentTarget.style.transform = "translateY(-1px)";
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.transform = "translateY(0)";
+              padding: "8px 18px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+              cursor: "pointer", transition: "all 0.15s", fontFamily: "'DM Mono', monospace",
+              background: bodSel === b.id ? "linear-gradient(135deg,#3b82f6,#6366f1)" : "#1a1f2e",
+              border: bodSel === b.id ? "none" : "1px solid #2d3550",
+              color: bodSel === b.id ? "#fff" : "#9ca3af",
             }}>
-              <span>{b.nombre}</span>
-              {alertCount > 0 && (
-                <span style={{
-                  background: "#ef4444", color: "#fff", borderRadius: 10,
-                  padding: "1px 6px", fontSize: 9, fontWeight: 700,
-                  animation: "pulseDot 2s ease-in-out infinite"
-                }}>
-                  {alertCount}
-                </span>
-              )}
+              {b.nombre}
             </button>
-          );
-        })}
-      </div>
-
-      {/* ═══ RESUMEN DE BODEGA ═══ */}
-      <div style={{
-        display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-        gap: 14, marginBottom: 24
-      }}>
-        {[
-          { label: "Disponible", value: resumen.totalDisp, color: "#22c55e", icon: "📦" },
-          { label: "Comprometido", value: resumen.totalComp, color: "#f59e0b", icon: "🔒" },
-          { label: "En Reclamo", value: resumen.totalRecl, color: "#ef4444", icon: "⚠️" },
-          { label: "Valor Inventario", value: `$${valorTotal.toLocaleString("es-CL")}`, color: "#8b5cf6", icon: "💰" },
-          { label: "SKUs Activos", value: resumen.items, color: "#06b6d4", icon: "📋" },
-          { label: "Alertas", value: resumen.alertas, color: resumen.alertas > 0 ? "#ef4444" : "#22c55e", icon: resumen.alertas > 0 ? "🔴" : "✅" },
-        ].map((stat, i) => (
-          <div key={i} style={{
-            background: "var(--bg-tertiary)", border: "1px solid var(--border-strong)",
-            borderRadius: "var(--radius-md)", padding: "14px 16px",
-            animation: `fadeInUp 0.4s var(--ease-out-expo) ${i * 0.05}s both`
-          }}>
-            <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between"
-            }}>
-              <div>
-                <div style={{
-                  fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase",
-                  letterSpacing: 0.5, fontWeight: 600, marginBottom: 4
-                }}>
-                  {stat.label}
-                </div>
-                <div style={{
-                  fontSize: 20, fontWeight: 800, color: stat.color,
-                  fontFamily: "var(--font-mono)"
-                }}>
-                  {stat.value}
-                </div>
-              </div>
-              <span style={{ fontSize: 20, opacity: 0.6 }}>{stat.icon}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* ═══ INFO DE ENCARGADO ═══ */}
-      <div style={{
-        background: "var(--bg-tertiary)", borderRadius: "var(--radius-md)",
-        border: "1px solid var(--border-strong)", marginBottom: 16,
-        padding: "12px 18px", display: "flex", justifyContent: "space-between",
-        alignItems: "center", animation: "fadeIn 0.4s ease"
-      }}>
-        <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-          Encargado: <span style={{ color: "var(--text-primary)", fontWeight: 700 }}>{bod?.encargado}</span>
+          ))}
         </div>
-        <div style={{
-          fontSize: 10, color: bod?.color, fontWeight: 600,
-          background: `${bod?.color}12`, border: `1px solid ${bod?.color}25`,
-          padding: "3px 10px", borderRadius: 6
-        }}>
-          {bod?.region}
-        </div>
+      )}
+
+      <div style={{ background: "#1a1f2e", borderRadius: 12, border: "1px solid #2d3550", marginBottom: 12, padding: "14px 18px", fontSize: 12, color: "#9ca3af" }}>
+        Bodega Seleccionada: <span style={{ color: "#e2e8f0", fontWeight: 700 }}>{bod?.nombre}</span> | Encargado: <span style={{ color: "#e2e8f0", fontWeight: 700 }}>{bod?.encargado}</span>
       </div>
 
-      {/* ═══ TABLA DE INVENTARIO ═══ */}
-      <div className="card" style={{ animation: "fadeInUp 0.5s var(--ease-out-expo) 0.2s both" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table className="data-table">
-            <thead>
-              <tr>
-                {["SKU", "Producto", "Disponible", "Comprometido", "Reclamo", "Mínimo", "Nivel", "Estado"].map(h => (
-                  <th key={h}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(s).map(([sku, st], idx) => {
-                const prod = CATALOGOS.find(c => c.sku === sku);
-                const bajo = st.disp < st.min;
-                const pct = st.min > 0 ? Math.round((st.disp / st.min) * 100) : 100;
-                const total = st.disp + st.comp + st.recl;
-
-                return (
-                  <tr key={sku} style={{
-                    background: bajo ? "rgba(239, 68, 68, 0.03)" : "transparent",
-                    animation: `fadeIn 0.3s ease ${idx * 0.04}s both`
-                  }}>
-                    <td>
-                      <span style={{
-                        fontSize: 12, color: "var(--accent-blue)",
-                        fontFamily: "var(--font-mono)", fontWeight: 700
-                      }}>
-                        {sku}
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{ fontSize: 13, color: "var(--text-primary)", fontWeight: 500 }}>
-                        {prod?.nombre}
-                      </div>
-                      <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 1 }}>
-                        ${prod?.precio?.toLocaleString("es-CL")} /ud
-                      </div>
-                    </td>
-                    <td>
-                      <span style={{
-                        fontSize: 15, fontWeight: 800, fontFamily: "var(--font-mono)",
-                        color: bajo ? "#ef4444" : "#22c55e"
-                      }}>
-                        {st.disp}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{
-                        fontSize: 14, fontFamily: "var(--font-mono)", fontWeight: 600,
-                        color: st.comp > 0 ? "#f59e0b" : "var(--text-faint)"
-                      }}>
-                        {st.comp}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{
-                        fontSize: 14, fontFamily: "var(--font-mono)", fontWeight: 600,
-                        color: st.recl > 0 ? "#ef4444" : "var(--text-faint)"
-                      }}>
-                        {st.recl}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{
-                        fontSize: 12, fontFamily: "var(--font-mono)",
-                        color: "var(--text-muted)"
-                      }}>
-                        {st.min}
-                      </span>
-                    </td>
-                    <td style={{ minWidth: 120 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <div style={{ flex: 1 }}>
-                          <ProgressBar
-                            value={st.disp}
-                            max={Math.max(st.min * 1.5, total, 1)}
-                            color={bajo ? "#ef4444" : "#22c55e"}
-                            height={5}
-                          />
-                        </div>
-                        <DonutChart
-                          value={st.disp}
-                          max={Math.max(st.min, 1)}
-                          color={bajo ? "#ef4444" : pct < 120 ? "#f59e0b" : "#22c55e"}
-                          size={32}
-                          thickness={3}
-                        />
-                      </div>
-                    </td>
-                    <td>
+      <div style={{ background: "#1a1f2e", borderRadius: 12, border: "1px solid #2d3550", overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid #2d3550" }}>
+              {["SKU", "Producto", "Disponible", "Comprometido", "En Reclamo", "Mínimo", "Estado", ...(esSupervisor ? ["Acciones"] : [])].map(h => (
+                <th key={h} style={{ padding: "10px 14px", textAlign: "left", fontSize: 10, color: "#6b7280", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(s).map(([sku, st]) => {
+              const prod = CATALOGOS.find(c => c.sku === sku);
+              const bajo = st.disp < st.min;
+              return (
+                <tr key={sku} style={{ borderBottom: "1px solid #1e2535" }}>
+                  <td style={{ padding: "10px 14px", fontSize: 11, color: "#60a5fa", fontFamily: "'DM Mono', monospace", fontWeight: 700 }}>{sku}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 12, color: "#e2e8f0" }}>{prod?.nombre}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 13, fontWeight: 800, color: bajo ? "#ef4444" : "#22c55e" }}>{st.disp}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 13, color: st.comp > 0 ? "#f59e0b" : "#6b7280" }}>{st.comp}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 13, color: st.recl > 0 ? "#ef4444" : "#6b7280" }}>{st.recl}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 12, color: "#6b7280" }}>{st.min}</td>
+                  <td style={{ padding: "10px 14px" }}>
+                    {bajo
+                      ? <span style={{ fontSize: 10, color: "#ef4444", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>⚠ Bajo mínimo</span>
+                      : <span style={{ fontSize: 10, color: "#22c55e", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>✓ OK</span>}
+                  </td>
+                  {esSupervisor && (
+                    <td style={{ padding: "8px 14px" }}>
                       {bajo ? (
-                        <div style={{
-                          display: "flex", alignItems: "center", gap: 6,
-                          fontSize: 10, color: "#ef4444", fontWeight: 700,
-                          textTransform: "uppercase", letterSpacing: 0.5,
-                          animation: bajo ? "borderPulse 1.5s ease infinite" : "none",
-                          background: "rgba(239, 68, 68, 0.08)",
-                          border: "1px solid rgba(239, 68, 68, 0.2)",
-                          borderRadius: 6, padding: "3px 8px",
-                          fontFamily: "var(--font-mono)"
-                        }}>
-                          <span style={{
-                            width: 6, height: 6, borderRadius: "50%", background: "#ef4444",
-                            animation: "pulseDot 1.5s ease-in-out infinite"
-                          }} />
-                          Bajo mínimo
-                        </div>
+                        <Btn variant="warning" small onClick={() => handleAvisarGestor(sku, prod?.nombre, st.disp, st.min)}>
+                          🔔 Avisar Gestor
+                        </Btn>
                       ) : (
-                        <div style={{
-                          display: "flex", alignItems: "center", gap: 6,
-                          fontSize: 10, color: "#22c55e", fontWeight: 700,
-                          textTransform: "uppercase", letterSpacing: 0.5,
-                          background: "rgba(34, 197, 94, 0.08)",
-                          border: "1px solid rgba(34, 197, 94, 0.2)",
-                          borderRadius: 6, padding: "3px 8px",
-                          fontFamily: "var(--font-mono)"
-                        }}>
-                          <span style={{
-                            width: 6, height: 6, borderRadius: "50%", background: "#22c55e"
-                          }} />
-                          OK
-                        </div>
+                        <span style={{ color: "#6b7280", fontSize: 12 }}>—</span>
                       )}
                     </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* ═══ COMPARATIVA ENTRE BODEGAS ═══ */}
-      <div style={{
-        marginTop: 24, animation: "fadeInUp 0.5s var(--ease-out-expo) 0.4s both"
-      }}>
-        <div style={{
-          fontSize: 12, fontWeight: 600, color: "var(--text-secondary)",
-          letterSpacing: 0.5, marginBottom: 14, fontFamily: "var(--font-mono)"
-        }}>
-          COMPARATIVA DE STOCK ENTRE BODEGAS
-        </div>
-        <div style={{
-          display: "grid", gridTemplateColumns: `repeat(${bodegas.length}, 1fr)`,
-          gap: 14
-        }}>
-          {bodegas.map(b => {
-            const bodStock = stock[b.id] || {};
-            const totalDisp = Object.values(bodStock).reduce((s, st) => s + st.disp, 0);
-            const totalMin = Object.values(bodStock).reduce((s, st) => s + st.min, 0);
-            const alertCount = Object.values(bodStock).filter(st => st.disp < st.min).length;
-            const pct = totalMin > 0 ? Math.round((totalDisp / totalMin) * 100) : 100;
-            const isSelected = b.id === bodSel;
-
-            return (
-              <div key={b.id} onClick={() => setBodSel(b.id)} style={{
-                background: isSelected ? `${b.color}08` : "var(--bg-tertiary)",
-                border: `1px solid ${isSelected ? b.color + "40" : "var(--border-strong)"}`,
-                borderRadius: "var(--radius-md)", padding: "16px",
-                cursor: "pointer", transition: "all var(--transition-fast)",
-                textAlign: "center"
-              }}
-              onMouseEnter={e => e.currentTarget.style.transform = "translateY(-2px)"}
-              onMouseLeave={e => e.currentTarget.style.transform = "translateY(0)"}>
-                <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-                  <DonutChart value={totalDisp} max={totalMin || 1} color={b.color} size={56} thickness={4} />
-                </div>
-                <div style={{
-                  fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4
-                }}>
-                  {b.nombre}
-                </div>
-                <div style={{
-                  fontSize: 11, color: "var(--text-muted)", marginBottom: 8
-                }}>
-                  {totalDisp} uds disponibles
-                </div>
-                {alertCount > 0 && (
-                  <div style={{
-                    fontSize: 9, color: "#ef4444", fontWeight: 700,
-                    background: "rgba(239, 68, 68, 0.08)",
-                    border: "1px solid rgba(239, 68, 68, 0.2)",
-                    borderRadius: 4, padding: "2px 6px", display: "inline-block"
-                  }}>
-                    {alertCount} alerta{alertCount > 1 ? "s" : ""}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

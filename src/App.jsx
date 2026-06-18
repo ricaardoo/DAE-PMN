@@ -15,6 +15,7 @@ export default function App() {
   const [pantalla, setPantalla] = useState("dashboard");
   const [modalNueva, setModalNueva] = useState(false);
   const [detalleId, setDetalleId] = useState(null);
+  const [modalNuevaSku, setModalNuevaSku] = useState(null);
   const [dbError, setDbError] = useState(null);
 
   const mostrarError = (msg) => {
@@ -26,6 +27,7 @@ export default function App() {
   const transferencias = useLiveQuery(() => db.transferencias.toArray());
   const stockList = useLiveQuery(() => db.stock.toArray());
   const log = useLiveQuery(() => db.logs.orderBy("id").reverse().limit(20).toArray());
+  const alertas = useLiveQuery(() => db.alertas.toArray());
 
   // Mapeo optimizado de existencias por Bodega y SKU
   const stock = useMemo(() => {
@@ -57,9 +59,12 @@ export default function App() {
       id,
       ...data,
       solicitante: usuario.nombre,
-      estado: data.requiereAprobacion ? "SOLICITADO" : "PREPARANDO",
+      estado: data.requiereAprobacion 
+        ? "SOLICITADO" 
+        : (data.origen === "COMPRA_EXTERNA" ? "EN_TRANSITO" : "PREPARANDO"),
       fechaCreacion: now(),
       fechaPreparando: data.requiereAprobacion ? null : now(),
+      fechaTransito: (data.requiereAprobacion || data.origen !== "COMPRA_EXTERNA") ? null : now(),
       cantidadDespacho: data.cantidad,
     };
 
@@ -67,24 +72,36 @@ export default function App() {
       await db.transaction("rw", db.transferencias, db.stock, db.logs, async () => {
         await db.transferencias.add(nueva);
 
-        // Comprometer stock en origen
-        const currentStock = await db.stock.get([data.origen, data.sku]);
-        if (currentStock) {
-          await db.stock.put({
-            ...currentStock,
-            disp: currentStock.disp - data.cantidad,
-            comp: currentStock.comp + data.cantidad,
-          });
+        // Comprometer stock en origen solo si NO es compra externa
+        if (data.origen !== "COMPRA_EXTERNA") {
+          const currentStock = await db.stock.get([data.origen, data.sku]);
+          if (currentStock) {
+            await db.stock.put({
+              ...currentStock,
+              disp: currentStock.disp - data.cantidad,
+              comp: currentStock.comp + data.cantidad,
+            });
+          }
         }
 
         const logMsg = data.requiereAprobacion
-          ? `${id} creado (pendiente aprobación). ${data.cantidad} uds. ${data.sku} comprometidas en ${BODEGAS_INIT.find((b) => b.id === data.origen)?.nombre}.`
-          : `${id} creado. ${data.cantidad} uds. ${data.sku} comprometidas en ${BODEGAS_INIT.find((b) => b.id === data.origen)?.nombre}.`;
+          ? `${id} creado (pendiente aprobación de Supervisor). ${data.cantidad} uds. ${data.sku} solicitadas.`
+          : (data.origen === "COMPRA_EXTERNA"
+              ? `${id} compra externa creada. ${data.cantidad} uds. de ${data.sku} solicitadas a proveedor.`
+              : `${id} creado. ${data.cantidad} uds. ${data.sku} comprometidas en ${BODEGAS_INIT.find((b) => b.id === data.origen)?.nombre}.`);
         await db.logs.add({ ts: now(), msg: logMsg });
       });
     } catch (e) {
       console.error("[DB] Error al crear transferencia:", e);
       mostrarError(`Error al crear la solicitud: ${e?.message || "fallo de base de datos"}`);
+    }
+  };
+
+  const handleDismissAlerta = async (alertaId) => {
+    try {
+      await db.alertas.delete(alertaId);
+    } catch (e) {
+      console.error("Error al descartar alerta:", e);
     }
   };
 
@@ -99,8 +116,11 @@ export default function App() {
       let logMsg = "";
 
       if (accion === "APROBAR") {
-        next.estado = "PREPARANDO";
+        next.estado = t.origen === "COMPRA_EXTERNA" ? "EN_TRANSITO" : "PREPARANDO";
         next.fechaPreparando = ts;
+        if (t.origen === "COMPRA_EXTERNA") {
+          next.fechaTransito = ts;
+        }
         logMsg = `${t.id}: Solicitud aprobada por supervisor.`;
       }
 
@@ -120,30 +140,34 @@ export default function App() {
           next.estado = "ANULADO";
           next.fechaAnulado = ts;
           
-          // devolver stock comprometido
-          const currentStock = await db.stock.get([t.origen, t.sku]);
-          if (currentStock) {
-            const compToFree = Math.min(currentStock.comp, t.cantidad);
-            await db.stock.put({
-              ...currentStock,
-              comp: currentStock.comp - compToFree,
-              disp: currentStock.disp + compToFree,
-            });
+          // devolver stock comprometido solo si NO es compra externa
+          if (t.origen !== "COMPRA_EXTERNA") {
+            const currentStock = await db.stock.get([t.origen, t.sku]);
+            if (currentStock) {
+              const compToFree = Math.min(currentStock.comp, t.cantidad);
+              await db.stock.put({
+                ...currentStock,
+                comp: currentStock.comp - compToFree,
+                disp: currentStock.disp + compToFree,
+              });
+            }
           }
           logMsg = `${t.id}: Anulado. Picking sin stock físico.`;
         }
       }
 
       if (accion === "ACEPTAR_PARCIAL") {
-        // liberar la diferencia de stock comprometido
-        const diff = t.cantidad - t.cantidadPicking;
-        const currentStock = await db.stock.get([t.origen, t.sku]);
-        if (currentStock) {
-          await db.stock.put({
-            ...currentStock,
-            comp: currentStock.comp - diff,
-            disp: currentStock.disp + diff,
-          });
+        // liberar la diferencia de stock comprometido solo si NO es compra externa
+        if (t.origen !== "COMPRA_EXTERNA") {
+          const diff = t.cantidad - t.cantidadPicking;
+          const currentStock = await db.stock.get([t.origen, t.sku]);
+          if (currentStock) {
+            await db.stock.put({
+              ...currentStock,
+              comp: currentStock.comp - diff,
+              disp: currentStock.disp + diff,
+            });
+          }
         }
         next.estado = "PREPARADO";
         next.fechaPreparado = ts;
@@ -157,12 +181,14 @@ export default function App() {
         next.fechaTransito = ts;
         next.operador = params.operador;
         // comp → trans (en stock lo marcamos visualmente liberando comp)
-        const currentStock = await db.stock.get([t.origen, t.sku]);
-        if (currentStock) {
-          await db.stock.put({
-            ...currentStock,
-            comp: currentStock.comp - next.cantidadDespacho,
-          });
+        if (t.origen !== "COMPRA_EXTERNA") {
+          const currentStock = await db.stock.get([t.origen, t.sku]);
+          if (currentStock) {
+            await db.stock.put({
+              ...currentStock,
+              comp: currentStock.comp - next.cantidadDespacho,
+            });
+          }
         }
         logMsg = `${t.id}: En tránsito. Operador: ${params.operador}. Despacho: ${next.cantidadDespacho} uds.`;
       }
@@ -230,16 +256,18 @@ export default function App() {
         next.estado = "ANULADO";
         next.fechaAnulado = ts;
         
-        // devolver stock comprometido
-        const currentStock = await db.stock.get([t.origen, t.sku]);
-        if (currentStock) {
-          const cant = next.cantidadDespacho ?? t.cantidad;
-          const compToFree = Math.min(currentStock.comp, cant);
-          await db.stock.put({
-            ...currentStock,
-            comp: currentStock.comp - compToFree,
-            disp: currentStock.disp + compToFree,
-          });
+        // devolver stock comprometido solo si NO es compra externa
+        if (t.origen !== "COMPRA_EXTERNA") {
+          const currentStock = await db.stock.get([t.origen, t.sku]);
+          if (currentStock) {
+            const cant = next.cantidadDespacho ?? t.cantidad;
+            const compToFree = Math.min(currentStock.comp, cant);
+            await db.stock.put({
+              ...currentStock,
+              comp: currentStock.comp - compToFree,
+              disp: currentStock.disp + compToFree,
+            });
+          }
         }
         logMsg = `${t.id}: ANULADO. Stock devuelto a disponible.`;
       }
@@ -256,7 +284,7 @@ export default function App() {
   };
 
   // Mostrar indicador de carga si la BD no ha poblado los almacenes iniciales
-  if (!transferencias || !stockList || !log) {
+  if (!transferencias || !stockList || !log || !alertas) {
     return (
       <div style={{ minHeight: "100vh", background: "#0a0e1a", color: "#e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Outfit', sans-serif" }}>
         <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.5, color: "#6366f1" }}>INICIALIZANDO BASE DE DATOS...</div>
@@ -323,13 +351,16 @@ export default function App() {
             stock={stock}
             bodegas={BODEGAS_INIT}
             onNueva={() => setModalNueva(true)}
+            onNuevaWithSku={(sku) => { setModalNuevaSku(sku); setModalNueva(true); }}
             onVerDetalle={t => setDetalleId(t.id)}
             usuario={usuario}
+            alertas={alertas}
+            onDismissAlerta={handleDismissAlerta}
           />
         )}
 
         {pantalla === "inventario" && (
-          <Inventario stock={stock} bodegas={BODEGAS_INIT} />
+          <Inventario stock={stock} bodegas={BODEGAS_INIT} usuario={usuario} />
         )}
 
         {pantalla === "auditoria" && (
@@ -351,11 +382,12 @@ export default function App() {
       {/* Modal Nueva Solicitud (Sujeto a validación interna por props) */}
       {modalNueva && (
         <NuevaSolicitud
-          onClose={() => setModalNueva(false)}
+          onClose={() => { setModalNueva(false); setModalNuevaSku(null); }}
           onCrear={handleCrearTransferencia}
           stock={stock}
           bodegas={BODEGAS_INIT}
           usuario={usuario}
+          initialSku={modalNuevaSku}
         />
       )}
 

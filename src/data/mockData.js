@@ -1,15 +1,15 @@
 export const CATALOGOS = [
-  { sku: "SKU-4421", nombre: "Tornillo Hexagonal M8", precio: 8000, categoria: "Fijación" },
-  { sku: "SKU-9901", nombre: "Perno Allen M10", precio: 5500, categoria: "Fijación" },
-  { sku: "SKU-1102", nombre: "Tuerca Ciega M6", precio: 3200, categoria: "Fijación" },
-  { sku: "SKU-3310", nombre: "Arandela Plana 1/2\"", precio: 1800, categoria: "Complemento" },
-  { sku: "SKU-7750", nombre: "Remache Pop 4mm", precio: 950, categoria: "Complemento" },
+  { sku: "SKU-4421", nombre: "Tornillo Hexagonal M8", precio: 8000 },
+  { sku: "SKU-9901", nombre: "Perno Allen M10", precio: 5500 },
+  { sku: "SKU-1102", nombre: "Tuerca Ciega M6", precio: 3200 },
+  { sku: "SKU-3310", nombre: "Arandela Plana 1/2\"", precio: 1800 },
+  { sku: "SKU-7750", nombre: "Remache Pop 4mm", precio: 950 },
 ];
 
 export const BODEGAS_INIT = [
-  { id: "BOD-NORTE", nombre: "Bodega Norte", encargado: "Ana Torres", region: "Zona Norte", color: "#3b82f6" },
-  { id: "BOD-SUR",   nombre: "Bodega Sur",   encargado: "Carlos Vega", region: "Zona Sur", color: "#22c55e" },
-  { id: "BOD-CENTRO",nombre: "Bodega Centro",encargado: "Luis Mora", region: "Zona Centro", color: "#f59e0b" },
+  { id: "BOD-NORTE", nombre: "Bodega Norte", encargado: "Ana Torres" },
+  { id: "BOD-SUR",   nombre: "Bodega Sur",   encargado: "Carlos Vega" },
+  { id: "BOD-CENTRO",nombre: "Bodega Centro",encargado: "Luis Mora" },
 ];
 
 export const STOCK_INIT = {
@@ -37,10 +37,7 @@ export const STOCK_INIT = {
 };
 
 export const TRANSFERENCIAS_INIT = [
-  { id: "ST-2026-001", sku: "SKU-4421", skuNombre: "Tornillo Hexagonal M8", cantidad: 40, cantidadDespacho: 40, origen: "BOD-SUR", destino: "BOD-NORTE", estado: "CERRADO", solicitante: "Ana Torres", fechaCreacion: "2026-05-06 09:15", fechaPreparando: "2026-05-06 09:30", fechaPreparado: "2026-05-06 11:00", fechaTransito: "2026-05-06 13:00", fechaCierre: "2026-05-06 17:10", operador: "Pedro Soto" },
-  { id: "ST-2026-002", sku: "SKU-9901", skuNombre: "Perno Allen M10", cantidad: 15, cantidadDespacho: 15, origen: "BOD-CENTRO", destino: "BOD-NORTE", estado: "EN_TRANSITO", solicitante: "Ana Torres", fechaCreacion: "2026-06-10 08:00", fechaPreparando: "2026-06-10 08:15", fechaPreparado: "2026-06-10 10:30", fechaTransito: "2026-06-10 12:00", operador: "Pedro Soto" },
-  { id: "ST-2026-003", sku: "SKU-1102", skuNombre: "Tuerca Ciega M6", cantidad: 25, cantidadDespacho: 25, origen: "BOD-SUR", destino: "BOD-CENTRO", estado: "PREPARADO", solicitante: "Luis Mora", fechaCreacion: "2026-06-12 14:20", fechaPreparando: "2026-06-12 14:35", fechaPreparado: "2026-06-13 09:00" },
-  { id: "ST-2026-004", sku: "SKU-3310", skuNombre: "Arandela Plana 1/2\"", cantidad: 100, cantidadDespacho: 100, origen: "BOD-NORTE", destino: "BOD-SUR", estado: "PREPARANDO", solicitante: "Carlos Vega", fechaCreacion: "2026-06-14 07:45", fechaPreparando: "2026-06-14 08:00", requiereAprobacion: false },
+  { id: "ST-2026-001", sku: "SKU-4421", skuNombre: "Tornillo Hexagonal M8", cantidad: 40, origen: "BOD-SUR", destino: "BOD-NORTE", estado: "CERRADO", solicitante: "Ana Torres", fechaCreacion: "2026-05-06 09:15", fechaCierre: "2026-05-06 17:10", operador: "Pedro Soto" },
 ];
 
 export const UMBRAL_APROBACION = 500000;
@@ -72,25 +69,12 @@ export const ESTADO_COLOR = {
   ANULADO: "#6b7280",
 };
 
-export const ESTADO_ICON = {
-  SOLICITADO: "📋",
-  PREPARANDO: "⚙️",
-  DISCREPANCIA_PICKING: "⚠️",
-  PREPARADO: "✅",
-  EN_TRANSITO: "🚚",
-  RECEPCION_PARCIAL: "📦",
-  PENDIENTE_RECLAMO: "🔴",
-  CERRADO: "✓",
-  CERRADO_CON_INCIDENCIA: "⚡",
-  ANULADO: "✕",
-};
-
 export const USUARIOS = [
-  { id: 1, nombre: "Ana Torres", rol: "SOLICITANTE", bodega: "BOD-NORTE", rolLabel: "Solicitante — Bodega Norte" },
-  { id: 2, nombre: "Carlos Vega", rol: "ENCARGADO_ORIGEN", bodega: "BOD-SUR", rolLabel: "Encargado Origen — Bodega Sur" },
-  { id: 3, nombre: "Luis Mora", rol: "ENCARGADO_ORIGEN", bodega: "BOD-CENTRO", rolLabel: "Encargado — Bodega Centro" },
-  { id: 4, nombre: "Pedro Soto", rol: "OPERADOR", bodega: null, rolLabel: "Operador de Transporte" },
-  { id: 5, nombre: "Jefa Logística", rol: "SUPERVISOR", bodega: null, rolLabel: "Supervisora / Autorizadora" },
-  { id: 6, nombre: "María Reyes", rol: "ENCARGADO_DESTINO", bodega: "BOD-NORTE", rolLabel: "Recepción — Bodega Norte" },
+  { id: 1, nombre: "Ana Torres", rol: "GESTOR", bodega: "BOD-NORTE", rolLabel: "Gestor — Bodega Norte" },
+  { id: 2, nombre: "Carlos Vega", rol: "GESTOR", bodega: "BOD-SUR", rolLabel: "Gestor — Bodega Sur" },
+  { id: 3, nombre: "Luis Mora", rol: "GESTOR", bodega: "BOD-CENTRO", rolLabel: "Gestor — Bodega Centro" },
+  { id: 4, nombre: "Sofía Ruiz", rol: "SUPERVISOR", bodega: "BOD-NORTE", rolLabel: "Supervisor — Bodega Norte" },
+  { id: 5, nombre: "Elena Gómez", rol: "SUPERVISOR", bodega: "BOD-CENTRO", rolLabel: "Supervisor — Bodega Centro" },
+  { id: 6, nombre: "Pedro Soto", rol: "SUPERVISOR", bodega: "BOD-SUR", rolLabel: "Supervisor — Bodega Sur" },
   { id: 7, nombre: "Admin", rol: "ADMIN", bodega: null, rolLabel: "Administrador del Sistema" },
 ];

@@ -216,7 +216,7 @@ export function Input({ label, value, onChange, type = "text", options, placehol
           aria-label={label}
         >
           <option value="">Seleccionar...</option>
-          {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          {options.map(o => <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>)}
         </select>
       ) : (
         <input
